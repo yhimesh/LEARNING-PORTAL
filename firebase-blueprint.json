@@ -1,0 +1,809 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile document storing registration details, role, and approval status",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Authentication User ID"
+        },
+        "fullName": {
+          "type": "string",
+          "description": "Full name of the user",
+          "minLength": 2,
+          "maxLength": 100
+        },
+        "email": {
+          "type": "string",
+          "description": "User email address",
+          "format": "email"
+        },
+        "requestedRole": {
+          "type": "string",
+          "description": "Role requested at signup. Only Trainee or Trainer are publicly allowed.",
+          "enum": ["Trainee", "Trainer"]
+        },
+        "accountStatus": {
+          "type": "string",
+          "description": "Account status. 'active' by default for Trainees, 'pending' for Trainers awaiting admin approval.",
+          "enum": ["active", "pending"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of account creation"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last profile update"
+        }
+      },
+      "required": ["uid", "fullName", "email", "requestedRole", "accountStatus", "createdAt"]
+    },
+    "Course": {
+      "title": "Course",
+      "description": "Educational course module created by approved trainers in the portal",
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "Course title",
+          "minLength": 2,
+          "maxLength": 120
+        },
+        "description": {
+          "type": "string",
+          "description": "Course overview or short summary",
+          "minLength": 10,
+          "maxLength": 2000
+        },
+        "fullDescription": {
+          "type": "string",
+          "description": "Detailed course curriculum explanation",
+          "maxLength": 5000
+        },
+        "category": {
+          "type": "string",
+          "description": "Subject category (e.g. Programming, AI and ML, Web Development, Database, Computer Science)",
+          "maxLength": 60
+        },
+        "level": {
+          "type": "string",
+          "description": "Target competency level",
+          "enum": ["Beginner", "Intermediate", "Advanced"]
+        },
+        "duration": {
+          "type": "string",
+          "description": "Course duration (e.g. '20 hours')",
+          "maxLength": 50
+        },
+        "trainerId": {
+          "type": "string",
+          "description": "Auth UID of the creating trainer",
+          "maxLength": 128
+        },
+        "trainerName": {
+          "type": "string",
+          "description": "Display name of the course trainer",
+          "maxLength": 100
+        },
+        "status": {
+          "type": "string",
+          "description": "Publishing status",
+          "enum": ["draft", "published", "archived"]
+        },
+        "syllabus": {
+          "type": "array",
+          "description": "List of syllabus module titles"
+        },
+        "prerequisites": {
+          "type": "string",
+          "description": "Prerequisite knowledge or skills",
+          "maxLength": 500
+        },
+        "outcomes": {
+          "type": "array",
+          "description": "Key learning outcomes"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the course was created"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last course update"
+        }
+      },
+      "required": [
+        "title",
+        "description",
+        "category",
+        "level",
+        "duration",
+        "trainerId",
+        "trainerName",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Enrollment": {
+      "title": "Enrollment",
+      "description": "Student trainee enrollment record for a published course",
+      "type": "object",
+      "properties": {
+        "courseId": {
+          "type": "string",
+          "description": "Firestore ID of the enrolled course",
+          "maxLength": 128
+        },
+        "traineeId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the enrolled trainee",
+          "maxLength": 128
+        },
+        "courseTitle": {
+          "type": "string",
+          "description": "Snapshot title of the course at enrollment",
+          "maxLength": 120
+        },
+        "trainerName": {
+          "type": "string",
+          "description": "Snapshot trainer name of the course at enrollment",
+          "maxLength": 100
+        },
+        "enrolledAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of the enrollment"
+        },
+        "status": {
+          "type": "string",
+          "description": "Enrollment status",
+          "enum": ["active", "completed", "dropped"]
+        }
+      },
+      "required": [
+        "courseId",
+        "traineeId",
+        "courseTitle",
+        "trainerName",
+        "enrolledAt",
+        "status"
+      ]
+    },
+    "Resource": {
+      "title": "Resource",
+      "description": "Learning resource or study material linked to a course, authored by an approved trainer",
+      "type": "object",
+      "properties": {
+        "courseId": {
+          "type": "string",
+          "description": "Firestore ID of the associated course",
+          "maxLength": 128
+        },
+        "trainerId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the trainer who owns this resource",
+          "maxLength": 128
+        },
+        "title": {
+          "type": "string",
+          "description": "Title of the learning resource",
+          "minLength": 2,
+          "maxLength": 120
+        },
+        "description": {
+          "type": "string",
+          "description": "Brief summary or instructions for this learning material",
+          "maxLength": 1000
+        },
+        "type": {
+          "type": "string",
+          "description": "Resource format category",
+          "enum": ["pdf", "video", "presentation", "document", "external_link"]
+        },
+        "url": {
+          "type": "string",
+          "description": "Validated direct link or external access URL (HTTPS or HTTP)",
+          "format": "uri",
+          "maxLength": 2048
+        },
+        "status": {
+          "type": "string",
+          "description": "Publication status for enrolled trainee visibility",
+          "enum": ["published", "draft"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of resource creation"
+        },
+
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last resource update"
+        }
+      },
+      "required": [
+        "courseId",
+        "trainerId",
+        "title",
+        "type",
+        "url",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Assessment": {
+      "title": "Assessment",
+      "description": "Quiz or assessment module for a course created by approved trainers",
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "Title of the quiz or assessment",
+          "minLength": 2,
+          "maxLength": 120
+        },
+        "description": {
+          "type": "string",
+          "description": "Overview, instructions, or scope of the quiz",
+          "minLength": 5,
+          "maxLength": 1000
+        },
+        "courseId": {
+          "type": "string",
+          "description": "Firestore ID of the associated course",
+          "maxLength": 128
+        },
+        "courseTitle": {
+          "type": "string",
+          "description": "Course title snapshot for easy display",
+          "maxLength": 120
+        },
+        "trainerId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the trainer who authored the quiz",
+          "maxLength": 128
+        },
+        "trainerName": {
+          "type": "string",
+          "description": "Name of the creating instructor",
+          "maxLength": 100
+        },
+        "passingPercentage": {
+          "type": "number",
+          "description": "Minimum score percentage required to pass",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "status": {
+          "type": "string",
+          "description": "Publishing status",
+          "enum": ["draft", "published", "archived"]
+        },
+        "totalMarks": {
+          "type": "number",
+          "description": "Calculated total maximum marks",
+          "minimum": 1
+        },
+        "questionCount": {
+          "type": "number",
+          "description": "Total number of multiple choice questions",
+          "minimum": 1,
+          "maximum": 50
+        },
+        "timeLimitMinutes": {
+          "type": "number",
+          "description": "Optional quiz time limit in minutes",
+          "minimum": 1,
+          "maximum": 300
+        },
+        "questions": {
+          "type": "array",
+          "description": "Array of multiple-choice questions (sanitized without answer keys in public document)"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of creation"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last update"
+        }
+      },
+      "required": [
+        "title",
+        "description",
+        "courseId",
+        "trainerId",
+        "trainerName",
+        "passingPercentage",
+        "status",
+        "totalMarks",
+        "questionCount",
+        "questions",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "AssessmentAnswerKey": {
+      "title": "AssessmentAnswerKey",
+      "description": "Protected answer key document isolated from trainees to prevent answer leaks",
+      "type": "object",
+      "properties": {
+        "assessmentId": {
+          "type": "string",
+          "description": "Identifier matching the parent assessment"
+        },
+        "courseId": {
+          "type": "string",
+          "description": "Course identifier"
+        },
+        "trainerId": {
+          "type": "string",
+          "description": "Trainer UID allowed to access the answer key"
+        },
+        "answers": {
+          "type": "array",
+          "description": "Mapping of question IDs to correctOptionIndex"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["assessmentId", "courseId", "trainerId", "answers", "updatedAt"]
+    },
+    "AssessmentAttempt": {
+      "title": "AssessmentAttempt",
+      "description": "Trainee quiz session attempt storing selected options and completion status",
+      "type": "object",
+      "properties": {
+        "assessmentId": {
+          "type": "string",
+          "description": "Firestore ID of the attempted assessment",
+          "maxLength": 128
+        },
+        "courseId": {
+          "type": "string",
+          "description": "Course identifier for enrollment verification",
+          "maxLength": 128
+        },
+        "traineeId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the trainee attempting the quiz",
+          "maxLength": 128
+        },
+        "traineeName": {
+          "type": "string",
+          "description": "Trainee full name snapshot",
+          "maxLength": 100
+        },
+        "assessmentTitle": {
+          "type": "string",
+          "description": "Snapshot assessment title",
+          "maxLength": 120
+        },
+        "courseTitle": {
+          "type": "string",
+          "description": "Snapshot course title",
+          "maxLength": 120
+        },
+        "answers": {
+          "type": "array",
+          "description": "Array of selected option indices (questionId and selectedOptionIndex only)"
+        },
+        "status": {
+          "type": "string",
+          "description": "Attempt lifecycle status",
+          "enum": ["in_progress", "submitted", "pending_grading"]
+        },
+        "startedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when the trainee opened the quiz"
+        },
+        "submittedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp of final submission"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Document creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Document update timestamp"
+        }
+      },
+      "required": [
+        "assessmentId",
+        "courseId",
+        "traineeId",
+        "answers",
+        "status",
+        "startedAt",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "AssessmentResult": {
+      "title": "AssessmentResult",
+      "description": "Authoritative graded result of a trainee assessment attempt",
+      "type": "object",
+      "properties": {
+        "attemptId": {
+          "type": "string",
+          "description": "Identifier matching the parent attempt"
+        },
+        "assessmentId": {
+          "type": "string",
+          "description": "Identifier of the graded quiz"
+        },
+        "courseId": {
+          "type": "string",
+          "description": "Associated course ID"
+        },
+        "traineeId": {
+          "type": "string",
+          "description": "Trainee Auth UID"
+        },
+        "traineeName": {
+          "type": "string",
+          "description": "Snapshot trainee name"
+        },
+        "traineeEmail": {
+          "type": "string",
+          "description": "Snapshot trainee email"
+        },
+        "assessmentTitle": {
+          "type": "string",
+          "description": "Assessment title"
+        },
+        "courseTitle": {
+          "type": "string",
+          "description": "Course title"
+        },
+        "totalQuestions": {
+          "type": "number",
+          "description": "Total question count"
+        },
+        "correctAnswers": {
+          "type": "number",
+          "description": "Total correctly answered questions"
+        },
+        "incorrectAnswers": {
+          "type": "number",
+          "description": "Total incorrect questions"
+        },
+        "unansweredCount": {
+          "type": "number",
+          "description": "Total questions left unanswered"
+        },
+        "totalMarks": {
+          "type": "number",
+          "description": "Total possible marks"
+        },
+        "marksObtained": {
+          "type": "number",
+          "description": "Calculated score obtained"
+        },
+        "percentage": {
+          "type": "number",
+          "description": "Final percentage score"
+        },
+        "passingPercentage": {
+          "type": "number",
+          "description": "Configured passing threshold"
+        },
+        "resultStatus": {
+          "type": "string",
+          "description": "Authoritative outcome",
+          "enum": ["passed", "failed"]
+        },
+        "submittedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "gradedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "attemptId",
+        "assessmentId",
+        "courseId",
+        "traineeId",
+        "totalQuestions",
+        "correctAnswers",
+        "incorrectAnswers",
+        "totalMarks",
+        "marksObtained",
+        "percentage",
+        "passingPercentage",
+        "resultStatus",
+        "submittedAt",
+        "gradedAt"
+      ]
+    },
+    "CourseReview": {
+      "title": "CourseReview",
+      "description": "Deterministic learner course review and rating document keyed by {courseId}_{traineeId}",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Deterministic key formatted as {courseId}_{traineeId}",
+          "maxLength": 260
+        },
+        "courseId": {
+          "type": "string",
+          "description": "Referenced course document ID",
+          "maxLength": 128
+        },
+        "courseTitle": {
+          "type": "string",
+          "description": "Title of the course at time of review",
+          "maxLength": 120
+        },
+        "traineeId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the reviewing trainee",
+          "maxLength": 128
+        },
+        "traineeName": {
+          "type": "string",
+          "description": "Public display name of the reviewer",
+          "minLength": 2,
+          "maxLength": 100
+        },
+        "rating": {
+          "type": "integer",
+          "description": "Whole star rating from 1 to 5",
+          "enum": [1, 2, 3, 4, 5]
+        },
+        "reviewText": {
+          "type": "string",
+          "description": "Written review feedback from the enrolled learner",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of initial review submission"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last review edit"
+        }
+      },
+      "required": [
+        "courseId",
+        "traineeId",
+        "traineeName",
+        "rating",
+        "reviewText",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "SupportTicket": {
+      "title": "SupportTicket",
+      "description": "User support ticket and technical assistance inquiry",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Document ID"
+        },
+        "requestId": {
+          "type": "string",
+          "description": "Unique support request identifier"
+        },
+        "userId": {
+          "type": "string",
+          "description": "Auth UID of the submitting user"
+        },
+        "userName": {
+          "type": "string",
+          "description": "Full name of the submitting user",
+          "minLength": 2,
+          "maxLength": 100
+        },
+        "userEmail": {
+          "type": "string",
+          "description": "Email address of the submitter",
+          "format": "email"
+        },
+        "subject": {
+          "type": "string",
+          "description": "Ticket subject line",
+          "minLength": 3,
+          "maxLength": 150
+        },
+        "category": {
+          "type": "string",
+          "description": "Issue category classification",
+          "enum": ["general", "account", "enrollment", "course_content", "technical_issue", "billing_access"]
+        },
+        "message": {
+          "type": "string",
+          "description": "Detailed explanation of the support request",
+          "minLength": 10,
+          "maxLength": 2000
+        },
+        "status": {
+          "type": "string",
+          "description": "Current lifecycle status of the ticket",
+          "enum": ["open", "in_progress", "waiting_for_user", "resolved"]
+        },
+        "ticketNumber": {
+          "type": "string",
+          "description": "Human-readable ticket code (e.g. TICK-1234)"
+        },
+        "lastResponseAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of most recent response"
+        },
+        "lastResponderRole": {
+          "type": "string",
+          "enum": ["admin", "user"]
+        },
+        "lastResponderName": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "requestId",
+        "userId",
+        "userName",
+        "userEmail",
+        "subject",
+        "category",
+        "message",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "SupportReply": {
+      "title": "SupportReply",
+      "description": "Conversation message reply attached to a support ticket",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Document ID"
+        },
+        "ticketId": {
+          "type": "string",
+          "description": "ID of parent support request"
+        },
+        "authorUid": {
+          "type": "string",
+          "description": "Auth UID of the responder"
+        },
+        "authorName": {
+          "type": "string",
+          "description": "Display name of the responder"
+        },
+        "authorRole": {
+          "type": "string",
+          "enum": ["admin", "user"]
+        },
+        "message": {
+          "type": "string",
+          "description": "Message content of the response",
+          "minLength": 2,
+          "maxLength": 1500
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "ticketId",
+        "authorUid",
+        "authorName",
+        "authorRole",
+        "message",
+        "createdAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{uid}": {
+      "schema": {
+        "$ref": "#/entities/UserProfile"
+      },
+      "description": "Collection of user profile documents keyed by Auth UID"
+    },
+    "/courses/{courseId}": {
+      "schema": {
+        "$ref": "#/entities/Course"
+      },
+      "description": "Collection of courses created by trainers and displayed in the public catalogue"
+    },
+    "/enrollments/{enrollmentId}": {
+      "schema": {
+        "$ref": "#/entities/Enrollment"
+      },
+      "description": "Collection of deterministic enrollment records keyed by {traineeId}_{courseId}"
+    },
+    "/resources/{resourceId}": {
+      "schema": {
+        "$ref": "#/entities/Resource"
+      },
+      "description": "Collection of learning resources linked to specific courses, managed by approved trainers"
+    },
+    "/assessments/{assessmentId}": {
+      "schema": {
+        "$ref": "#/entities/Assessment"
+      },
+      "description": "Collection of course assessments and quizzes managed by approved trainers"
+    },
+    "/assessmentAnswerKeys/{keyId}": {
+      "schema": {
+        "$ref": "#/entities/AssessmentAnswerKey"
+      },
+      "description": "Protected collection of assessment answer keys restricted exclusively to authoring trainers and admins"
+    },
+    "/assessmentAttempts/{attemptId}": {
+      "schema": {
+        "$ref": "#/entities/AssessmentAttempt"
+      },
+      "description": "Collection of deterministic trainee assessment attempts keyed by {traineeId}_{assessmentId}"
+    },
+    "/assessmentResults/{resultId}": {
+      "schema": {
+        "$ref": "#/entities/AssessmentResult"
+      },
+      "description": "Collection of authoritative graded results keyed by {traineeId}_{assessmentId}"
+    },
+    "/courseReviews/{reviewId}": {
+      "schema": {
+        "$ref": "#/entities/CourseReview"
+      },
+      "description": "Collection of course ratings and reviews keyed deterministically as {courseId}_{traineeId}"
+    },
+    "/supportRequests/{ticketId}": {
+      "schema": {
+        "$ref": "#/entities/SupportTicket"
+      },
+      "description": "Collection of support tickets created by users and administered by authorized staff"
+    },
+    "/supportReplies/{replyId}": {
+      "schema": {
+        "$ref": "#/entities/SupportReply"
+      },
+      "description": "Collection of conversation messages and responses for support tickets"
+    }
+  }
+}
+

@@ -1,0 +1,6 @@
+{
+  "name": "CAPACITY CONNECT",
+  "description": "A Digital Capacity Building and Learning Management Portal for SIH26075",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

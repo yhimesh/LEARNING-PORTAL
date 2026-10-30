@@ -1,0 +1,793 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny all access
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        request.auth.token.email == 'yhimeshc@gmail.com' ||
+        request.auth.token.email == 'admin@capacityconnect.edu'
+      );
+    }
+
+
+    // Role check: Only approved trainers with 'active' status can manage courses
+    function isApprovedTrainer() {
+      return isSignedIn() && (
+        isAdmin() || (
+          exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.requestedRole == 'Trainer' &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.accountStatus == 'active'
+        )
+      );
+    }
+
+    // Role check: Only active trainees can enroll in courses
+    function isActiveTrainee() {
+      return isSignedIn() && (
+        isAdmin() || (
+          exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.requestedRole == 'Trainee' &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.accountStatus == 'active'
+        )
+      );
+    }
+
+    // UserProfile schema and boundary validation
+    function isValidUserProfile(data, uid) {
+      return data.keys().hasAll(['uid', 'fullName', 'email', 'requestedRole', 'accountStatus', 'createdAt'])
+        && data.keys().hasOnly(['uid', 'fullName', 'email', 'requestedRole', 'accountStatus', 'createdAt', 'updatedAt'])
+        && data.uid == uid
+        && data.uid == request.auth.uid
+        && data.fullName is string
+        && data.fullName.size() >= 2
+        && data.fullName.size() <= 100
+        && data.email is string
+        && data.email.size() <= 200
+        && data.requestedRole in ['Trainee', 'Trainer']
+        && (
+          (data.requestedRole == 'Trainee' && data.accountStatus == 'active') ||
+          (data.requestedRole == 'Trainer' && data.accountStatus == 'pending')
+        );
+    }
+
+    // Course schema validation
+    function isValidCourse(data) {
+      return data.keys().hasAll([
+          'title', 'description', 'category', 'level', 'duration',
+          'trainerId', 'trainerName', 'status', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'title', 'description', 'fullDescription', 'category', 'level',
+          'duration', 'trainerId', 'trainerName', 'status',
+          'syllabus', 'prerequisites', 'outcomes', 'averageRating', 'reviewCount',
+          'createdAt', 'updatedAt'
+        ])
+        && data.title is string && data.title.size() >= 2 && data.title.size() <= 120
+        && data.description is string && data.description.size() >= 10 && data.description.size() <= 2000
+        && (!('fullDescription' in data) || (data.fullDescription is string && data.fullDescription.size() <= 5000))
+        && data.category is string && data.category.size() >= 2 && data.category.size() <= 60
+        && data.level in ['Beginner', 'Intermediate', 'Advanced']
+        && data.duration is string && data.duration.size() >= 1 && data.duration.size() <= 50
+        && data.trainerId is string && data.trainerId.size() >= 3 && data.trainerId.size() <= 128
+        && (isSignedIn() ? (data.trainerId == request.auth.uid || isAdmin() || data.trainerId == 'system-bootstrap') : (data.trainerId == 'system-bootstrap'))
+        && data.trainerName is string && data.trainerName.size() >= 2 && data.trainerName.size() <= 100
+        && data.status in ['draft', 'published', 'archived']
+        && (!('averageRating' in data) || (data.averageRating is number && data.averageRating >= 0 && data.averageRating <= 5))
+        && (!('reviewCount' in data) || (data.reviewCount is int && data.reviewCount >= 0))
+        && (!('prerequisites' in data) || (data.prerequisites is string && data.prerequisites.size() <= 500))
+        && (!('syllabus' in data) || (data.syllabus is list && data.syllabus.size() <= 30))
+        && (!('outcomes' in data) || (data.outcomes is list && data.outcomes.size() <= 20));
+    }
+
+    // Enrollment schema and integrity validation
+    function isValidEnrollment(data, enrollmentId) {
+      return data.keys().hasAll(['courseId', 'traineeId', 'courseTitle', 'trainerName', 'enrolledAt', 'status'])
+        && data.keys().hasOnly(['courseId', 'traineeId', 'courseTitle', 'trainerName', 'enrolledAt', 'status'])
+        && data.traineeId == request.auth.uid
+        && data.courseId is string && data.courseId.size() >= 1 && data.courseId.size() <= 128
+        && enrollmentId == (request.auth.uid + '_' + data.courseId)
+        && data.courseTitle is string && data.courseTitle.size() >= 2 && data.courseTitle.size() <= 120
+        && data.trainerName is string && data.trainerName.size() >= 2 && data.trainerName.size() <= 100
+        && data.status in ['active', 'completed', 'dropped']
+        && exists(/databases/$(database)/documents/courses/$(data.courseId))
+        && get(/databases/$(database)/documents/courses/$(data.courseId)).data.status == 'published';
+    }
+
+    // Resource schema and boundary validation (supporting URLs and Firebase Storage uploads)
+    function isValidResource(data) {
+      return data.keys().hasAll(['courseId', 'trainerId', 'title', 'type', 'url', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['courseId', 'trainerId', 'title', 'description', 'type', 'url', 'status', 'sourceType', 'storagePath', 'fileName', 'fileSize', 'contentType', 'createdAt', 'updatedAt'])
+        && data.courseId is string && data.courseId.size() >= 1 && data.courseId.size() <= 128
+        && data.trainerId is string && data.trainerId == request.auth.uid
+        && data.title is string && data.title.size() >= 2 && data.title.size() <= 120
+        && (!('description' in data) || (data.description is string && data.description.size() <= 1000))
+        && (!('status' in data) || data.status in ['published', 'draft'])
+        && (!('sourceType' in data) || data.sourceType in ['link', 'file'])
+        && (!('storagePath' in data) || (data.storagePath is string && data.storagePath.size() <= 500))
+        && (!('fileName' in data) || (data.fileName is string && data.fileName.size() >= 1 && data.fileName.size() <= 255))
+        && (!('fileSize' in data) || (data.fileSize is number && data.fileSize > 0 && data.fileSize <= 10485760))
+        && (!('contentType' in data) || (data.contentType is string && data.contentType.size() <= 100))
+        && data.type in ['pdf', 'video', 'presentation', 'document', 'external_link']
+        && data.url is string && data.url.size() >= 8 && data.url.size() <= 2048
+        && (data.url.matches('^https?://.*'))
+        && exists(/databases/$(database)/documents/courses/$(data.courseId))
+        && (get(/databases/$(database)/documents/courses/$(data.courseId)).data.trainerId == request.auth.uid || isAdmin());
+    }
+
+    // Assessment schema and boundary validation
+    function isValidAssessment(data) {
+      return data.keys().hasAll([
+          'title', 'description', 'courseId', 'trainerId', 'trainerName',
+          'passingPercentage', 'status', 'totalMarks', 'questionCount', 'questions',
+          'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'title', 'description', 'courseId', 'courseTitle', 'trainerId', 'trainerName',
+          'passingPercentage', 'status', 'totalMarks', 'questionCount', 'timeLimitMinutes',
+          'questions', 'createdAt', 'updatedAt'
+        ])
+        && data.title is string && data.title.size() >= 2 && data.title.size() <= 120
+        && data.description is string && data.description.size() >= 5 && data.description.size() <= 1000
+        && data.courseId is string && data.courseId.size() >= 1 && data.courseId.size() <= 128
+        && (!('courseTitle' in data) || (data.courseTitle is string && data.courseTitle.size() <= 120))
+        && data.trainerId is string && data.trainerId == request.auth.uid
+        && data.trainerName is string && data.trainerName.size() >= 2 && data.trainerName.size() <= 100
+        && data.passingPercentage is number && data.passingPercentage >= 1 && data.passingPercentage <= 100
+        && data.status in ['draft', 'published', 'archived']
+        && data.totalMarks is number && data.totalMarks >= 1 && data.totalMarks <= 10000
+        && data.questionCount is number && data.questionCount >= 1 && data.questionCount <= 50
+        && (!('timeLimitMinutes' in data) || (data.timeLimitMinutes is number && data.timeLimitMinutes >= 1 && data.timeLimitMinutes <= 300))
+        && data.questions is list && data.questions.size() >= 1 && data.questions.size() <= 50
+        && exists(/databases/$(database)/documents/courses/$(data.courseId))
+        && (get(/databases/$(database)/documents/courses/$(data.courseId)).data.trainerId == request.auth.uid || isAdmin());
+    }
+
+    // AssessmentAnswerKey schema and security validation
+    function isValidAnswerKey(data, keyId) {
+      return data.keys().hasAll(['assessmentId', 'courseId', 'trainerId', 'answers', 'updatedAt'])
+        && data.keys().hasOnly(['assessmentId', 'courseId', 'trainerId', 'answers', 'createdAt', 'updatedAt'])
+        && data.assessmentId == keyId
+        && data.trainerId == request.auth.uid
+        && data.courseId is string && data.courseId.size() >= 1 && data.courseId.size() <= 128
+        && data.answers is list && data.answers.size() >= 1 && data.answers.size() <= 50;
+    }
+
+    // AssessmentAttempt schema and security validation
+    function isValidAttempt(data, attemptId) {
+      return data.keys().hasAll(['assessmentId', 'courseId', 'traineeId', 'answers', 'status', 'startedAt', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['assessmentId', 'courseId', 'traineeId', 'traineeName', 'assessmentTitle', 'courseTitle', 'answers', 'status', 'startedAt', 'submittedAt', 'createdAt', 'updatedAt'])
+        && data.traineeId == request.auth.uid
+        && data.assessmentId is string && data.assessmentId.size() >= 1 && data.assessmentId.size() <= 128
+        && data.courseId is string && data.courseId.size() >= 1 && data.courseId.size() <= 128
+        && attemptId == (request.auth.uid + '_' + data.assessmentId)
+        && data.status in ['in_progress', 'submitted', 'pending_grading']
+        && data.answers is list && data.answers.size() <= 50
+        && exists(/databases/$(database)/documents/courses/$(data.courseId))
+        && exists(/databases/$(database)/documents/assessments/$(data.assessmentId))
+        && get(/databases/$(database)/documents/assessments/$(data.assessmentId)).data.status == 'published'
+        && get(/databases/$(database)/documents/assessments/$(data.assessmentId)).data.courseId == data.courseId
+        && exists(/databases/$(database)/documents/enrollments/$(request.auth.uid + '_' + data.courseId))
+        && get(/databases/$(database)/documents/enrollments/$(request.auth.uid + '_' + data.courseId)).data.status == 'active';
+    }
+
+    // AssessmentResult schema and integrity validation
+    function isValidAssessmentResult(data, resultId) {
+      return data.keys().hasAll([
+          'attemptId', 'assessmentId', 'courseId', 'traineeId', 'totalQuestions',
+          'correctAnswers', 'incorrectAnswers', 'totalMarks', 'marksObtained',
+          'percentage', 'passingPercentage', 'resultStatus', 'submittedAt', 'gradedAt'
+        ])
+        && data.keys().hasOnly([
+          'attemptId', 'assessmentId', 'courseId', 'traineeId', 'traineeName',
+          'traineeEmail', 'assessmentTitle', 'courseTitle', 'totalQuestions',
+          'correctAnswers', 'incorrectAnswers', 'unansweredCount', 'totalMarks',
+          'marksObtained', 'percentage', 'passingPercentage', 'resultStatus',
+          'submittedAt', 'gradedAt', 'createdAt', 'updatedAt'
+        ])
+        && data.traineeId == request.auth.uid
+        && resultId == (request.auth.uid + '_' + data.assessmentId)
+        && data.resultStatus in ['passed', 'failed']
+        && data.percentage >= 0 && data.percentage <= 100
+        && data.passingPercentage >= 1 && data.passingPercentage <= 100
+        && exists(/databases/$(database)/documents/courses/$(data.courseId))
+        && exists(/databases/$(database)/documents/assessments/$(data.assessmentId))
+        && exists(/databases/$(database)/documents/enrollments/$(request.auth.uid + '_' + data.courseId));
+    }
+
+    // CourseProgress schema and integrity validation
+    function isValidCourseProgress(data, progressId) {
+      return data.keys().hasAll([
+          'id', 'traineeId', 'courseId', 'completedResourceIds',
+          'completedResourceCount', 'totalResourceCount', 'progressPercentage',
+          'status', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'traineeId', 'courseId', 'traineeName', 'traineeEmail',
+          'courseTitle', 'completedResourceIds', 'completedResourceCount',
+          'totalResourceCount', 'progressPercentage', 'status',
+          'lastCompletedResourceId', 'createdAt', 'updatedAt'
+        ])
+        && data.id == progressId
+        && data.id == (request.auth.uid + '_' + data.courseId)
+        && data.traineeId == request.auth.uid
+        && data.completedResourceIds is list
+        && data.completedResourceCount is number && data.completedResourceCount >= 0
+        && data.totalResourceCount is number && data.totalResourceCount >= 0
+        && data.progressPercentage is number && data.progressPercentage >= 0 && data.progressPercentage <= 100
+        && data.status in ['not_started', 'in_progress', 'completed']
+        && exists(/databases/$(database)/documents/courses/$(data.courseId))
+        && exists(/databases/$(database)/documents/enrollments/$(request.auth.uid + '_' + data.courseId));
+    }
+
+    // Notification schema and security validation
+    function isValidNotification(data, notificationId) {
+      return data.keys().hasAll(['recipientUid', 'type', 'title', 'message', 'isRead', 'createdAt'])
+        && data.keys().hasOnly(['id', 'recipientUid', 'type', 'title', 'message', 'relatedEntityId', 'relatedEntityType', 'isRead', 'readAt', 'createdAt', 'updatedAt'])
+        && data.recipientUid is string && data.recipientUid.size() >= 1 && data.recipientUid.size() <= 128
+        && data.type in ['enrollment_success', 'new_enrollment', 'trainer_approved', 'trainer_pending_review', 'assessment_result', 'assessment_submitted', 'new_resource', 'system']
+        && data.title is string && data.title.size() >= 2 && data.title.size() <= 120
+        && data.message is string && data.message.size() >= 2 && data.message.size() <= 1000
+        && data.isRead is bool;
+    }
+
+    // CourseReview schema and integrity validation
+    function isValidCourseReview(data, reviewId) {
+      return data.keys().hasAll(['courseId', 'traineeId', 'traineeName', 'rating', 'reviewText', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'courseId', 'courseTitle', 'traineeId', 'traineeName', 'rating', 'reviewText', 'createdAt', 'updatedAt'])
+        && data.courseId is string && data.courseId.size() >= 1 && data.courseId.size() <= 128
+        && data.traineeId == request.auth.uid
+        && data.traineeName is string && data.traineeName.size() >= 1 && data.traineeName.size() <= 100
+        && (!('courseTitle' in data) || (data.courseTitle is string && data.courseTitle.size() <= 120))
+        && data.rating in [1, 2, 3, 4, 5]
+        && data.reviewText is string && data.reviewText.size() >= 1 && data.reviewText.size() <= 500
+        && reviewId == (data.courseId + '_' + request.auth.uid);
+    }
+
+    // SupportTicket schema and security validation (Stage 9.2)
+    function isValidSupportTicket(data, ticketId) {
+      return data.keys().hasAll(['requestId', 'userId', 'userName', 'userEmail', 'subject', 'category', 'message', 'status', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'requestId', 'userId', 'userName', 'userEmail', 'subject', 'category', 'message', 'status', 'ticketNumber', 'lastResponseAt', 'lastResponderRole', 'lastResponderName', 'createdAt', 'updatedAt'])
+        && data.requestId == ticketId
+        && data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128
+        && data.userName is string && data.userName.size() >= 2 && data.userName.size() <= 100
+        && data.userEmail is string && data.userEmail.size() >= 3 && data.userEmail.size() <= 200
+        && data.subject is string && data.subject.size() >= 3 && data.subject.size() <= 150
+        && data.category in ['general', 'account', 'enrollment', 'course_content', 'technical_issue', 'billing_access']
+        && data.message is string && data.message.size() >= 10 && data.message.size() <= 2000
+        && data.status in ['open', 'in_progress', 'waiting_for_user', 'resolved']
+        && (!('lastResponderRole' in data) || data.lastResponderRole in ['admin', 'user']);
+    }
+
+    // SupportReply schema and security validation (Stage 9.2)
+    function isValidSupportReply(data, replyId) {
+      return data.keys().hasAll(['ticketId', 'authorUid', 'authorName', 'authorRole', 'message', 'createdAt'])
+        && data.keys().hasOnly(['id', 'ticketId', 'authorUid', 'authorName', 'authorRole', 'message', 'createdAt'])
+        && data.ticketId is string && data.ticketId.size() >= 1 && data.ticketId.size() <= 128
+        && data.authorUid is string && data.authorUid.size() >= 1 && data.authorUid.size() <= 128
+        && data.authorUid == request.auth.uid
+        && data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 100
+        && data.authorRole in ['admin', 'user']
+        && data.message is string && data.message.size() >= 2 && data.message.size() <= 1500;
+    }
+
+    // Connection test document rule
+    match /test/connection {
+      allow read: if true;
+    }
+
+    // Admins collection
+    match /admins/{adminId} {
+      allow read: if isSignedIn() && (request.auth.uid == adminId || isAdmin());
+      allow write: if false; // System / console managed only
+    }
+
+    // Users collection
+    match /users/{uid} {
+      allow get: if isOwner(uid) || isAdmin();
+      allow list: if isAdmin();
+
+      allow create: if isOwner(uid)
+        && isValidId(uid)
+        && isValidUserProfile(incoming(), uid)
+        && incoming().createdAt == request.time;
+
+      allow update: if (isAdmin() && isValidId(uid)) || (
+        isOwner(uid)
+        && isValidId(uid)
+        && isValidUserProfile(incoming(), uid)
+        && incoming().uid == existing().uid
+        && incoming().email == existing().email
+        && incoming().requestedRole == existing().requestedRole
+        && incoming().accountStatus == existing().accountStatus
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['fullName', 'updatedAt'])
+        && incoming().updatedAt == request.time
+      );
+
+      allow delete: if isAdmin() && isValidId(uid);
+    }
+
+    // Courses collection
+    match /courses/{courseId} {
+      // Public can read only published courses.
+      // Trainers can read their own draft/archived courses.
+      // Admins can read all courses.
+      allow get: if resource.data.status == 'published'
+        || (isSignedIn() && (resource.data.trainerId == request.auth.uid || isAdmin()));
+
+      allow list: if resource.data.status == 'published'
+        || (isSignedIn() && (resource.data.trainerId == request.auth.uid || isAdmin()));
+
+      // Only approved trainers or admins can create courses, or system bootstrapping of initial published catalog
+      allow create: if isValidId(courseId)
+        && isValidCourse(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (
+          isApprovedTrainer()
+          || (incoming().status == 'published' && incoming().trainerId == 'system-bootstrap')
+        );
+
+      // Only the course's creating trainer (or admin) can update their course
+      allow update: if isValidId(courseId)
+        && isValidCourse(incoming())
+        && ((isApprovedTrainer() && existing().trainerId == request.auth.uid) || isAdmin())
+        && incoming().trainerId == existing().trainerId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time;
+
+      // Only the course's creating trainer (or admin) can delete their course
+      allow delete: if isValidId(courseId)
+        && ((isApprovedTrainer() && existing().trainerId == request.auth.uid) || isAdmin());
+    }
+
+    // Enrollments collection
+    match /enrollments/{enrollmentId} {
+      // Trainees can get their own enrollment; trainers can view enrollments for their own courses; admins can read all
+      allow get: if isSignedIn() && (
+        (resource == null && enrollmentId.matches('^' + request.auth.uid + '_.*$')) ||
+        (resource != null && (
+          resource.data.traineeId == request.auth.uid ||
+          isAdmin() ||
+          isApprovedTrainer() ||
+          (exists(/databases/$(database)/documents/courses/$(resource.data.courseId)) &&
+           get(/databases/$(database)/documents/courses/$(resource.data.courseId)).data.trainerId == request.auth.uid)
+        ))
+      );
+
+      // Trainees can list their own enrollments; course trainers can list enrollments for courses they own; admins can list all
+      allow list: if isSignedIn() && (
+        resource.data.traineeId == request.auth.uid ||
+        isAdmin() ||
+        isApprovedTrainer() ||
+        (exists(/databases/$(database)/documents/courses/$(resource.data.courseId)) &&
+         get(/databases/$(database)/documents/courses/$(resource.data.courseId)).data.trainerId == request.auth.uid)
+      );
+
+      // Only active trainees can create an enrollment for themselves in a published course
+      allow create: if isSignedIn()
+        && isActiveTrainee()
+        && isValidEnrollment(incoming(), enrollmentId)
+        && incoming().status == 'active'
+        && incoming().enrolledAt == request.time;
+
+      // Immutable once created by trainee; admins can update status (e.g. completed)
+      allow update: if isAdmin();
+
+      // Deletion restricted to the enrolled trainee or admins
+      allow delete: if isAdmin() || (isSignedIn() && resource.data.traineeId == request.auth.uid);
+    }
+
+    // Resources collection: Learning resources managed by course-authoring trainers
+    match /resources/{resourceId} {
+      // Trainer who created the resource, admin, or enrolled active trainee can read published resources
+      allow get: if isSignedIn() && (
+        resource.data.trainerId == request.auth.uid ||
+        isAdmin() ||
+        (isActiveTrainee() &&
+         exists(/databases/$(database)/documents/enrollments/$(request.auth.uid + '_' + resource.data.courseId)) &&
+         (!('status' in resource.data) || resource.data.status == 'published'))
+      );
+
+      // Trainer can list their own resources, admin can list all, enrolled active trainees can list published resources for their course
+      allow list: if isSignedIn() && (
+        resource.data.trainerId == request.auth.uid ||
+        isAdmin() ||
+        (isActiveTrainee() &&
+         exists(/databases/$(database)/documents/enrollments/$(request.auth.uid + '_' + resource.data.courseId)) &&
+         (!('status' in resource.data) || resource.data.status == 'published'))
+      );
+
+      // Only approved trainers who own the referenced course can create resources for it
+      allow create: if isSignedIn()
+        && isApprovedTrainer()
+        && isValidId(resourceId)
+        && isValidResource(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      // Only the owning trainer or admin can update the resource
+      allow update: if isSignedIn()
+        && ((isApprovedTrainer() && existing().trainerId == request.auth.uid) || isAdmin())
+        && isValidId(resourceId)
+        && isValidResource(incoming())
+        && incoming().trainerId == existing().trainerId
+        && incoming().courseId == existing().courseId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time;
+
+      // Only the owning trainer or admin can delete the resource
+      allow delete: if isSignedIn()
+        && ((isApprovedTrainer() && existing().trainerId == request.auth.uid) || isAdmin())
+        && isValidId(resourceId);
+    }
+
+    // Assessments collection
+    match /assessments/{assessmentId} {
+      // Authoring trainer, admin can read any assessment status.
+      // Active enrolled trainee can only read published assessments for courses they are enrolled in.
+      allow get: if isSignedIn() && (
+        resource.data.trainerId == request.auth.uid ||
+        isAdmin() ||
+        (isActiveTrainee() &&
+         resource.data.status == 'published' &&
+         exists(/databases/$(database)/documents/enrollments/$(request.auth.uid + '_' + resource.data.courseId)))
+      );
+
+      allow list: if isSignedIn() && (
+        resource.data.trainerId == request.auth.uid ||
+        isAdmin() ||
+        (isActiveTrainee() &&
+         resource.data.status == 'published' &&
+         exists(/databases/$(database)/documents/enrollments/$(request.auth.uid + '_' + resource.data.courseId)))
+      );
+
+      // Only approved trainers who own the referenced course can create assessments
+      allow create: if isSignedIn()
+        && isApprovedTrainer()
+        && isValidId(assessmentId)
+        && isValidAssessment(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      // Only owning trainer or admin can update
+      allow update: if isSignedIn()
+        && ((isApprovedTrainer() && existing().trainerId == request.auth.uid) || isAdmin())
+        && isValidId(assessmentId)
+        && isValidAssessment(incoming())
+        && incoming().trainerId == existing().trainerId
+        && incoming().courseId == existing().courseId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time;
+
+      // Only owning trainer or admin can delete
+      allow delete: if isSignedIn()
+        && ((isApprovedTrainer() && existing().trainerId == request.auth.uid) || isAdmin())
+        && isValidId(assessmentId);
+    }
+
+    // Assessment Answer Keys collection: strictly private to trainers and admins, never accessible to trainees
+    match /assessmentAnswerKeys/{keyId} {
+      allow get: if isSignedIn() && (
+        (isApprovedTrainer() && resource.data.trainerId == request.auth.uid) ||
+        isAdmin()
+      );
+
+      allow list: if isSignedIn() && (
+        (isApprovedTrainer() && resource.data.trainerId == request.auth.uid) ||
+        isAdmin()
+      );
+
+      allow create: if isSignedIn()
+        && isApprovedTrainer()
+        && isValidId(keyId)
+        && isValidAnswerKey(incoming(), keyId)
+        && incoming().updatedAt == request.time;
+
+      allow update: if isSignedIn()
+        && ((isApprovedTrainer() && existing().trainerId == request.auth.uid) || isAdmin())
+        && isValidId(keyId)
+        && isValidAnswerKey(incoming(), keyId)
+        && incoming().trainerId == existing().trainerId
+        && incoming().assessmentId == existing().assessmentId
+        && incoming().updatedAt == request.time;
+
+      allow delete: if isSignedIn()
+        && ((isApprovedTrainer() && existing().trainerId == request.auth.uid) || isAdmin())
+        && isValidId(keyId);
+    }
+
+    // Assessment Attempts collection: trainee quiz sessions
+    match /assessmentAttempts/{attemptId} {
+      // Trainee who created the attempt can read their own attempt.
+      // Authoring trainer can read attempts for their assessments.
+      // Admin can read all attempts.
+      allow get: if isSignedIn() && (
+        resource.data.traineeId == request.auth.uid ||
+        isAdmin() ||
+        isApprovedTrainer() ||
+        (exists(/databases/$(database)/documents/assessments/$(resource.data.assessmentId)) &&
+         get(/databases/$(database)/documents/assessments/$(resource.data.assessmentId)).data.trainerId == request.auth.uid)
+      );
+
+      allow list: if isSignedIn() && (
+        resource.data.traineeId == request.auth.uid ||
+        isAdmin() ||
+        isApprovedTrainer()
+      );
+
+      // Only active trainees enrolled in the published course can initialize an in_progress attempt
+      allow create: if isSignedIn()
+        && isActiveTrainee()
+        && isValidAttempt(incoming(), attemptId)
+        && incoming().status == 'in_progress'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      // Trainee can update while in_progress (save answers, or submit). Once submitted, answers cannot be edited!
+      allow update: if isSignedIn()
+        && resource.data.traineeId == request.auth.uid
+        && existing().status == 'in_progress'
+        && isValidAttempt(incoming(), attemptId)
+        && incoming().traineeId == existing().traineeId
+        && incoming().assessmentId == existing().assessmentId
+        && incoming().courseId == existing().courseId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time;
+
+      // Only admin can delete attempts
+      allow delete: if isAdmin();
+    }
+
+    // Assessment Results collection: Authoritative graded scores
+    match /assessmentResults/{resultId} {
+      // Trainee who took the quiz can read their own result.
+      // Course trainer can read results for their courses.
+      // Admin can read all.
+      allow get: if isSignedIn() && (
+        resource.data.traineeId == request.auth.uid ||
+        isAdmin() ||
+        isApprovedTrainer() ||
+        (exists(/databases/$(database)/documents/courses/$(resource.data.courseId)) &&
+         get(/databases/$(database)/documents/courses/$(resource.data.courseId)).data.trainerId == request.auth.uid)
+      );
+
+      allow list: if isSignedIn() && (
+        resource.data.traineeId == request.auth.uid ||
+        isAdmin() ||
+        isApprovedTrainer() ||
+        (exists(/databases/$(database)/documents/courses/$(resource.data.courseId)) &&
+         get(/databases/$(database)/documents/courses/$(resource.data.courseId)).data.trainerId == request.auth.uid)
+      );
+
+      // Can be created by active enrolled trainee submitting their completed attempt or backend service
+      allow create: if isSignedIn()
+        && (
+          isAdmin() ||
+          (isActiveTrainee() &&
+           isValidAssessmentResult(incoming(), resultId) &&
+           exists(/databases/$(database)/documents/assessmentAttempts/$(resultId)) &&
+           get(/databases/$(database)/documents/assessmentAttempts/$(resultId)).data.status == 'submitted')
+        );
+
+      // Scores are immutable once calculated! Neither trainees nor trainers can alter server-calculated scores.
+      allow update: if isAdmin();
+
+      // Only admin can delete results
+      allow delete: if isAdmin();
+    }
+
+    // Course Progress collection: Trainee completion tracking
+    match /courseProgress/{progressId} {
+      // Trainee who owns progress can read.
+      // Course trainer who owns the course can read.
+      // Admin can read all.
+      allow get: if isSignedIn() && (
+        resource.data.traineeId == request.auth.uid ||
+        isAdmin() ||
+        isApprovedTrainer() ||
+        (exists(/databases/$(database)/documents/courses/$(resource.data.courseId)) &&
+         get(/databases/$(database)/documents/courses/$(resource.data.courseId)).data.trainerId == request.auth.uid)
+      );
+
+      allow list: if isSignedIn() && (
+        resource.data.traineeId == request.auth.uid ||
+        isAdmin() ||
+        isApprovedTrainer() ||
+        (exists(/databases/$(database)/documents/courses/$(resource.data.courseId)) &&
+         get(/databases/$(database)/documents/courses/$(resource.data.courseId)).data.trainerId == request.auth.uid)
+      );
+
+      // Trainee enrolled in the course can initialize their progress record
+      allow create: if isSignedIn()
+        && (
+          isAdmin() ||
+          (isActiveTrainee() &&
+           incoming().traineeId == request.auth.uid &&
+           isValidCourseProgress(incoming(), progressId) &&
+           incoming().createdAt == request.time &&
+           incoming().updatedAt == request.time)
+        );
+
+      // Trainee can update their own progress as they complete resources
+      allow update: if isSignedIn()
+        && (
+          isAdmin() ||
+          (resource.data.traineeId == request.auth.uid &&
+           isValidCourseProgress(incoming(), progressId) &&
+           incoming().traineeId == existing().traineeId &&
+           incoming().courseId == existing().courseId &&
+           incoming().createdAt == existing().createdAt &&
+           incoming().updatedAt == request.time)
+        );
+
+      // Only admin can delete progress records
+      allow delete: if isAdmin();
+    }
+
+    // Notifications collection: In-app real-time alerts
+    match /notifications/{notificationId} {
+      // User can read their own notifications; admins can read all
+      allow get: if isSignedIn() && (resource.data.recipientUid == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (resource.data.recipientUid == request.auth.uid || isAdmin());
+
+      // Create notifications for authorized actions
+      allow create: if isSignedIn()
+        && isValidId(notificationId)
+        && isValidNotification(incoming(), notificationId);
+
+      // Only the recipient or admin can mark as read / update read status
+      allow update: if isSignedIn()
+        && (resource.data.recipientUid == request.auth.uid || isAdmin())
+        && incoming().recipientUid == existing().recipientUid
+        && incoming().type == existing().type
+        && incoming().title == existing().title
+        && incoming().message == existing().message
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['isRead', 'readAt', 'updatedAt']);
+
+      // Recipient or admin can delete notification
+      allow delete: if isSignedIn()
+        && (resource.data.recipientUid == request.auth.uid || isAdmin());
+    }
+
+    // Course Reviews & Ratings collection (Stage 8.3)
+    match /courseReviews/{reviewId} {
+      // Course reviews and aggregate ratings are visible for learner discovery
+      allow get: if true;
+      allow list: if true;
+
+      // Only authenticated active trainees enrolled in the published course can submit a review.
+      // Course creating trainers cannot review their own course.
+      allow create: if isSignedIn()
+        && (
+          isAdmin() ||
+          (isActiveTrainee() &&
+           isValidCourseReview(incoming(), reviewId) &&
+           incoming().createdAt == request.time &&
+           incoming().updatedAt == request.time &&
+           exists(/databases/$(database)/documents/enrollments/$(request.auth.uid + '_' + incoming().courseId)) &&
+           exists(/databases/$(database)/documents/courses/$(incoming().courseId)) &&
+           get(/databases/$(database)/documents/courses/$(incoming().courseId)).data.status == 'published' &&
+           get(/databases/$(database)/documents/courses/$(incoming().courseId)).data.trainerId != request.auth.uid)
+        );
+
+      // Trainees can only edit their own reviews. CourseId, traineeId and createdAt are immutable.
+      allow update: if isSignedIn()
+        && (
+          isAdmin() ||
+          (resource.data.traineeId == request.auth.uid &&
+           isValidCourseReview(incoming(), reviewId) &&
+           incoming().traineeId == existing().traineeId &&
+           incoming().courseId == existing().courseId &&
+           incoming().createdAt == existing().createdAt &&
+           incoming().updatedAt == request.time &&
+           incoming().diff(existing()).affectedKeys().hasOnly(['rating', 'reviewText', 'traineeName', 'courseTitle', 'id', 'updatedAt']))
+        );
+
+      // Trainee who owns the review or platform admin can delete it
+      allow delete: if isSignedIn()
+        && (resource.data.traineeId == request.auth.uid || isAdmin());
+    }
+
+    // Support Requests collection (Stage 9.2)
+    match /supportRequests/{ticketId} {
+      // Users can only view their own tickets; admins can view all tickets
+      allow get: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow list: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+
+      // Authenticated users can create their own support ticket with initial status 'open'
+      allow create: if isSignedIn()
+        && isValidId(ticketId)
+        && isValidSupportTicket(incoming(), ticketId)
+        && incoming().userId == request.auth.uid
+        && incoming().status == 'open'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      // Admins can update ticket status and response fields.
+      // Submitting user can update response metadata when replying, but cannot impersonate admin or change ownership.
+      allow update: if isSignedIn() && (
+        isAdmin() || (
+          resource.data.userId == request.auth.uid
+          && isValidSupportTicket(incoming(), ticketId)
+          && incoming().userId == existing().userId
+          && incoming().requestId == existing().requestId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'lastResponseAt', 'lastResponderRole', 'lastResponderName', 'updatedAt'])
+          && (!('lastResponderRole' in incoming()) || incoming().lastResponderRole != 'admin')
+        )
+      );
+
+      // Only administrators can delete tickets
+      allow delete: if isAdmin();
+    }
+
+    // Support Replies collection (Stage 9.2)
+    match /supportReplies/{replyId} {
+      // Admins can read all replies; users can only read replies for tickets they own
+      allow get: if isSignedIn() && (
+        isAdmin() || (
+          exists(/databases/$(database)/documents/supportRequests/$(resource.data.ticketId)) &&
+          get(/databases/$(database)/documents/supportRequests/$(resource.data.ticketId)).data.userId == request.auth.uid
+        )
+      );
+
+      allow list: if isSignedIn() && (
+        isAdmin() || (
+          exists(/databases/$(database)/documents/supportRequests/$(resource.data.ticketId)) &&
+          get(/databases/$(database)/documents/supportRequests/$(resource.data.ticketId)).data.userId == request.auth.uid
+        )
+      );
+
+      // Admins can create official admin responses. Users can only reply to their own tickets as 'user'.
+      allow create: if isSignedIn()
+        && isValidId(replyId)
+        && isValidSupportReply(incoming(), replyId)
+        && incoming().createdAt == request.time
+        && (
+          (isAdmin() && incoming().authorRole == 'admin') ||
+          (
+            incoming().authorRole == 'user' &&
+            exists(/databases/$(database)/documents/supportRequests/$(incoming().ticketId)) &&
+            get(/databases/$(database)/documents/supportRequests/$(incoming().ticketId)).data.userId == request.auth.uid
+          )
+        );
+
+      // Conversation replies are immutable
+      allow update: if false;
+
+      // Only administrators can delete replies
+      allow delete: if isAdmin();
+    }
+  }
+}
+

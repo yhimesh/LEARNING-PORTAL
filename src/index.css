@@ -1,0 +1,90 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Times New Roman", Times, Baskerville, Georgia, serif;
+  --font-serif: "Times New Roman", Times, Baskerville, Georgia, serif;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    color-scheme: dark;
+    font-family: "Times New Roman", Times, Baskerville, Georgia, serif;
+    letter-spacing: 0.015em;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    background-color: #020617;
+    color: #f8fafc;
+    font-family: "Times New Roman", Times, Baskerville, Georgia, serif;
+    letter-spacing: 0.015em;
+    line-height: 1.65;
+  }
+
+  /* Headings: balanced optical tracking and readable leading for Times New Roman */
+  h1, h2, h3, h4, h5, h6 {
+    line-height: 1.25;
+    letter-spacing: 0.01em;
+  }
+
+  h1 {
+    line-height: 1.18;
+    letter-spacing: 0.005em;
+  }
+
+  /* Paragraphs and copy blocks */
+  p, li, blockquote {
+    line-height: 1.7;
+    letter-spacing: 0.018em;
+  }
+
+  /* Form controls, buttons, and inputs */
+  button, input, select, textarea {
+    font-family: inherit;
+    letter-spacing: 0.02em;
+    line-height: 1.5;
+  }
+
+  /* Labels, captions, table headers, and badges */
+  label, caption, small {
+    letter-spacing: 0.025em;
+    line-height: 1.5;
+  }
+
+  /* Uppercase text needs breathing room with serif characters */
+  .uppercase {
+    letter-spacing: 0.06em;
+  }
+
+  /* Prevent serif collision in tight utility classes */
+  .tracking-tight {
+    letter-spacing: 0.005em;
+  }
+
+  .tracking-tighter {
+    letter-spacing: -0.005em;
+  }
+
+  /* Accessible focus indicators for keyboard navigation */
+  :focus-visible {
+    outline: 2px solid #38bdf8;
+    outline-offset: 2px;
+  }
+
+  /* Support OS reduced motion preferences */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    ::before,
+    ::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+

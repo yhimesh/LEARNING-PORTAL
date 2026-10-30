@@ -1,0 +1,29 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Course learning resources uploaded by approved trainers
+    // Path pattern: course-resources/{courseId}/{trainerUid}/{fileName}
+    match /course-resources/{courseId}/{trainerUid}/{fileName} {
+      // Authenticated users can read/download published course files
+      allow read: if request.auth != null;
+
+      // Only the authoring trainer can upload files for their course
+      // Enforce 10 MB maximum file size, sanitized file names, and valid technical document MIME types
+      allow create: if request.auth != null
+        && request.auth.uid == trainerUid
+        && request.resource.size <= 10 * 1024 * 1024
+        && fileName.size() >= 1 && fileName.size() <= 255
+        && fileName.matches('^[a-zA-Z0-9_.\\- ]+$')
+        && (
+          request.resource.contentType.matches('application/pdf|application/msword|application/vnd.openxmlformats-officedocument.wordprocessingml.document|application/vnd.ms-powerpoint|application/vnd.openxmlformats-officedocument.presentationml.presentation|text/plain')
+        );
+
+      // Prevent unauthorized file replacement; files are immutable once uploaded
+      allow update: if false;
+
+      // Only the authoring trainer can delete their course files
+      allow delete: if request.auth != null
+        && request.auth.uid == trainerUid;
+    }
+  }
+}
